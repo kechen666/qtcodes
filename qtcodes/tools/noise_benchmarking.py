@@ -23,7 +23,7 @@ plt.rcParams.update({"font.size": 14, "pdf.fonttype": 42, "ps.fonttype": 42})
 from multiprocessing import Pool
 
 
-class TopologicalBenchmark:
+class NoiseTopologicalBenchmark:
     def __init__(
         self,
         decoder,
@@ -57,14 +57,20 @@ class TopologicalBenchmark:
         """
         total_count = 0.0
         total_errors = 0.0
+        n = 0
         for readout, count in readout_strings.items():
             total_count += count
+            # 目前暂时只考虑一层的情况。
+            # 考虑在前面添加一层无错误的情况，当然，这里暂时只考虑Z错误，因此将X上置为相同。
+            print(f"readout: {readout}")
             predicted_logical_value = self.decoder.correct_readout(
-                readout, "Z", err_prob=err_prob
+                readout, "Z", err_prob=None
             )
+            print(f"predicted_logical_value: {predicted_logical_value}, self.correct_logical_value:{self.correct_logical_value}")
             if predicted_logical_value != self.correct_logical_value:
                 total_errors += count
-
+                n += 1
+        print(f"error number:{n}")
         return total_errors / total_count
 
     def sweep(
@@ -101,7 +107,7 @@ class TopologicalBenchmark:
             reverse=True,
         )  # higher physical_error_rate readout is slower to decode, gives more accurate tqdm estimate
         pbar = tqdm(physical_error_rates)
-        print(f"physical_error_rates: {physical_error_rates},pbar: {pbar}")
+        # print(f"physical_error_rates: {physical_error_rates},pbar: {pbar}")
         for physical_error_rate in pbar:
             results = (
                 Aer.get_backend("aer_simulator").run(
@@ -164,7 +170,7 @@ class TopologicalBenchmark:
         self.data["logical_error_rates"] = logical_error_rates
 
     def single(
-        self, physical_error_rate: float, save_data: bool = True, shots: int = 2048,
+        self, physical_error_rate: Dict[str, Dict], save_data: bool = True, shots: int = 2048,
     ):
         """
         Take single error rates and calculate the associated logical error rate.
@@ -191,7 +197,7 @@ class TopologicalBenchmark:
             .get_counts()
         )
         logical_error_rate_value = self.logical_error_rate(
-            results, err_prob=physical_error_rate
+            results, err_prob=None
         )
         print("Done simulating physical_error_rate: " + str(physical_error_rate))
         if save_data:
@@ -220,7 +226,7 @@ class TopologicalBenchmark:
         )
 
 
-class TopologicalAnalysis:
+class NoiseTopologicalAnalysis:
     def __init__(self, filename: Optional[str] = None):
         self.filename = filename
         self.data: Dict[str, List[float]] = {}
@@ -251,13 +257,13 @@ class TopologicalAnalysis:
             plt.xscale("log")
 
 
-class TopologicalBatchAnalysis:
+class NoiseTopologicalBatchAnalysis:
     def __init__(self, dirname: str):
         self.dirname = dirname
         self.filenames = glob.glob(self.dirname + "*.npz")
         self.analyses = []
         for filename in self.filenames:
-            self.analyses.append(TopologicalAnalysis(filename))
+            self.analyses.append(NoiseTopologicalAnalysis(filename))
             self.analyses[-1].load_data()
 
         # sort analysis by increasing "d"

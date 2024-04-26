@@ -19,7 +19,7 @@ TQubit = Tuple[float, float, float]  # (time,row,column) ==> (t,i,j)
 TQubitLoc = Tuple[float, float]  # (row,column) ==> (i,j)
 
 
-class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
+class NoiseLatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
     """
     Class to construct the graph corresponding to the possible syndromes
     of a quantum error correction code, and then run suitable decoders.
@@ -32,7 +32,7 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
         List[str] of syndrome graph keys (e.g. "X", "Z")
         """
 
-    def __init__(self, params: Dict) -> None:
+    def __init__(self, params: Dict, edge_weight: Dict[str, Dict[int, float]]) -> None:
         super().__init__(params)
         self._params_validation()
 
@@ -46,7 +46,9 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
         self.virtual = self._specify_virtual()
         # print(self.virtual)
         self._encoder = None
-        self._make_syndrome_graph()
+        self.edge_weight = edge_weight
+        
+        self._make_syndrome_graph(edge_weight)
 
     @property
     def encoder(self):
@@ -110,7 +112,7 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
         # need to ensure there are an even number of nodes
         make_even = len(nodes) % 2 != 0
         nodes += self.virtual[syndrome_graph_key]
-
+        
         # add all nodes to error_graph
         for node in nodes:
             if node not in error_graph.nodes():
@@ -120,7 +122,7 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
         # finding the maximum-weight perfect matching of the whole graph gives
         # the most likely sequence of errors that led to these syndromes.
         shortest_distance_mat = rx.graph_floyd_warshall_numpy(
-            self.S[syndrome_graph_key]
+            self.S[syndrome_graph_key], weight_fn = lambda x: float(x)
         )
         # print("shortest_distance_mat", shortest_distance_mat)
         num_shortest_paths: Dict[int, Dict[int, int]] = {}
@@ -134,19 +136,20 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
                 i = self.node_map[syndrome_graph_key][source]
                 j = self.node_map[syndrome_graph_key][target]
                 distance = float(shortest_distance_mat[i][j])
-                if err_prob:
-                    deg, num_shortest_paths = self._path_degeneracy(
-                        source,
-                        target,
-                        syndrome_graph_key,
-                        num_shortest_paths,
-                        shortest_distance_mat,
-                    )
-                    # print(f"source: {i}, target: {j}")
-                    # print(f"deg: {deg}, num_shortest_paths: {num_shortest_paths}")
-                    distance = distance - math.log(deg) / (
-                        math.log1p(-1.0 * err_prob) - math.log(err_prob)
-                    )
+                # print(source, target, i, j, distance)
+                # if err_prob:
+                #     deg, num_shortest_paths = self._path_degeneracy(
+                #         source,
+                #         target,
+                #         syndrome_graph_key,
+                #         num_shortest_paths,
+                #         shortest_distance_mat,
+                #     )
+                #     # print(f"source: {i}, target: {j}")
+                #     # print(f"deg: {deg}, num_shortest_paths: {num_shortest_paths}")
+                #     distance = distance - math.log(deg) / (
+                #         math.log1p(-1.0 * err_prob) - math.log(err_prob)
+                #     )
                 distance = -1.0 * distance
             error_graph.add_edge(node_map[source], node_map[target], distance)
         if make_even:
@@ -258,7 +261,7 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
             return num_shortest_paths[a_indx][b_indx], num_shortest_paths
 
     def _run_mwpm_graph(
-        self, matching_graph: rx.PyGraph, floats: bool = False
+        self, matching_graph: rx.PyGraph, floats: bool = True
     ) -> rx.PyGraph:
         """
         Return matches of minimum weight perfect matching (MWPM) on matching_graph.
@@ -274,7 +277,7 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
         """
 
         # TODO: Temporary fix for matching with float edge weights
-        weight_fn = int if not floats else lambda n: int(n * 10000)
+        weight_fn = int if not floats else lambda n: int(n * 100000)
         matches_idxs = rx.max_weight_matching(
             matching_graph, max_cardinality=True, weight_fn=weight_fn,
         )
@@ -299,7 +302,7 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
         return matched_graph
 
     def _run_mwpm(
-        self, matching_graph: rx.PyGraph, floats=False
+        self, matching_graph: rx.PyGraph, floats=True
     ) -> List[Tuple[TQubit, TQubit]]:
         """
         Return matches of minimum weight perfect matching (MWPM) on matching_graph.
@@ -313,18 +316,18 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
             [(TQubit, TQubit),]: List of matchings found from MWPM
         """
         # TODO: Temporary fix for matching with float edge weights
-        weight_fn = int if not floats else lambda n: int(n * 10000)
+        weight_fn = int if not floats else lambda n: int(n * 100000)
+        # weight_fn = int if not floats else 
         matches_idxs = rx.max_weight_matching(
-            matching_graph, max_cardinality=True, weight_fn=weight_fn,
+            matching_graph, max_cardinality=True, weight_fn= weight_fn,
         )
         matches = [(matching_graph[i], matching_graph[j]) for (i, j) in matches_idxs]
-        # print(matches)
         filtered_matches = [
             (source, target)
             for (source, target) in matches
             if not (source[0] == -1 and target[0] == -1)
         ]
-
+        
         return filtered_matches
 
     def _corrections(
@@ -387,22 +390,24 @@ class LatticeDecoder(TopologicalDecoder[TQubit], metaclass=ABCMeta):
             This method can be used to benchmark logical error rates, as well as perform fault tolerant readout.
         """
         if type(syndromes) == str:
-            # 如果一开始Z不是0000，则需要进行处理。
+            # 考虑一层的Z，我们考虑在最前面加一层相同的Z为0的层，以便于检测错误。
+            # Z的长度为len(syndromes.split(" ")[1])，X就不变。
             init_syndromes = syndromes.split(" ")[-1]
             len_Z = int(len(syndromes.split(" ")[1])/2)
-            if init_syndromes[len_Z:] != "0" * len_Z:
-                init_syndromes = init_syndromes[:len_Z] + "0"*len_Z
-                syndromes = syndromes + " " + init_syndromes
-            print(f"str syndromes: {syndromes}")
+            init_syndromes = init_syndromes[:len_Z] + "0"*len_Z
+            syndromes = syndromes + " " + init_syndromes
+            print("str syndromes", syndromes)
             logical_qubit_value, syndromes = self.parse_readout(
                 str(syndromes), logical_readout_type
             )
+
+        
         syndromes = cast(Dict[str, List[TQubit]], syndromes)
         logical_qubit_value = cast(int, logical_qubit_value)
-        # print(f"syndromes: {syndromes}")
-        # print(f"syndromes: {syndromes}, logical_qubit_value:{logical_qubit_value}")
+
+        # 不需要考虑简并性，就直接考虑最小权重
         matches = self._corrections(
-            syndromes[logical_readout_type], logical_readout_type, err_prob=err_prob
+            syndromes[logical_readout_type], logical_readout_type, err_prob=None
         )
         print(f"syndromes: {syndromes}, logical_qubit_value:{logical_qubit_value}")
         

@@ -436,7 +436,7 @@ class _RotatedLattice(_TopologicalLattice[TQubit], metaclass=ABCMeta):
                 value: (time, row, col) of parsed syndrome hits (changes between consecutive rounds)
         """
         chunks = readout_string.split(" ")
-
+        # print(f"0 chunks: {chunks}")
         if len(chunks[0]) > 1:  # this is true when all data qubits are readout
             assert readout_type is not None
             (
@@ -450,19 +450,24 @@ class _RotatedLattice(_TopologicalLattice[TQubit], metaclass=ABCMeta):
             logical_readout = int(chunks[0])
             chunks = chunks[1:]
 
+        # print(f"1 chunks: {chunks}")
         int_syndromes = [int(x, base=2) for x in chunks[::-1]]
         xor_syndromes = [a ^ b for (a, b) in zip(int_syndromes, int_syndromes[1:])]
-
+        
+        # print(f"2 int_syndromes:{int_syndromes}, xor_syndromes: {xor_syndromes}")
         num_syn = self.params["num_syn"]
+        # print(f"num_syn: {num_syn}")
         mask_z = "1" * num_syn[self.SYNZ]
         mask_x = "1" * num_syn[self.SYNX] + "0" * num_syn[self.SYNZ]
         x_syndromes = [
             (x & int(mask_x, base=2)) >> num_syn[self.SYNZ] for x in xor_syndromes
         ]
+        # print(f"x_syndromes: {x_syndromes}")
         z_syndromes = []
         if mask_z != "":
+            # print(f"mask_z: {mask_z}")
             z_syndromes = [x & int(mask_z, base=2) for x in xor_syndromes]
-
+        # print(f"z_syndromes: {z_syndromes}")
         dw = self.params["d"][self.W]
         X = []
         per_row_x = dw // 2
@@ -475,8 +480,11 @@ class _RotatedLattice(_TopologicalLattice[TQubit], metaclass=ABCMeta):
 
         Z = []
         per_row_z = dw // 2 + 1
+        # print(f"per_row_z: {per_row_z}")
         for T, syndrome in enumerate(z_syndromes):
+            # print(f"T:{T}, syndrome: {syndrome}")
             for loc in range(num_syn[self.SYNZ]):
+                # print(f"loc: {loc}")
                 if syndrome & 1 << loc:
                     row = 0.5 + loc // per_row_z
                     col = (0.5 - (loc // per_row_z) % 2) + (loc % per_row_z) * 2

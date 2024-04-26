@@ -6,8 +6,8 @@ from numbers import Number
 from typing import Tuple, List, Dict
 
 from qtcodes.circuits.xxzz import XXZZQubit
-from qtcodes.fitters.lattice_decoder import (
-    LatticeDecoder,
+from qtcodes.fitters.noise_lattice_decoder import (
+    NoiseLatticeDecoder,
     TQubit,
     TQubitLoc,
 )
@@ -15,7 +15,7 @@ from qtcodes.circuits.base import LatticeError
 from qtcodes.common import constants
 
 
-class RotatedDecoder(LatticeDecoder):
+class NoiseRotatedDecoder(NoiseLatticeDecoder):
     """
     Class to construct the graph corresponding to the possible syndromes
     of a quantum error correction surface code, and then run suitable decoders.
@@ -47,7 +47,7 @@ class RotatedDecoder(LatticeDecoder):
         if dw % 2 != 1:
             raise LatticeError("Surface code width must be odd!")
 
-    def _make_syndrome_graph(self) -> None:
+    def _make_syndrome_graph(self, edge_weight: Dict[str, Dict[int, float]]) -> None:
         """
         Populates self.S["X"] and self.S["Z"] syndrome rx.PyGraph's
         with nodes specified by time and position.
@@ -65,7 +65,7 @@ class RotatedDecoder(LatticeDecoder):
                     syndrome_graph_key
                 ].add_node(node_label)
                 self._populate_syndrome_graph(
-                    (t,) + start_node, t, [], syndrome_graph_key, 1
+                    (t,) + start_node, t, [], syndrome_graph_key, edge_weight
                 )
 
             # connect physical qubits in same location across subgraphs of adjacent times
@@ -87,7 +87,7 @@ class RotatedDecoder(LatticeDecoder):
         t: int,
         visited_nodes: List[TQubit],
         syndrome_graph_key: str,
-        edge_weight: int = 1,
+        edge_weight: Dict[str, Dict[int, float]],
     ) -> None:
         """Recursive function to populate syndrome subgraph at time t with syndrome_graph_key X/Z.
         The current_node is connected to neighboring nodes without revisiting a node.
@@ -140,11 +140,17 @@ class RotatedDecoder(LatticeDecoder):
                     syndrome_graph_key
                 ].add_node(target_node)
             
+            # print(f"normal: {syndrome_graph_key}, {current_node}, {target_node}")
+            # print(current_node[1], self.params['d'])
+            data_id = int((current_node[1]+target_node[1])/2 * self.params['d'][0] + (current_node[2]+target_node[2])/2)
+            # print(f"data qubit id is:{data_id}")
             self.S[syndrome_graph_key].add_edge(
                 self.node_map[syndrome_graph_key][current_node],
                 self.node_map[syndrome_graph_key][target_node],
-                edge_weight,
+                edge_weight[syndrome_graph_key][data_id],
             )  # add edge between current_node and target_node
+            # print(f"edge_weight: {edge_weight[syndrome_graph_key][data_id]}")
+
 
         # add virtual neighbors
         for target in virtual_neighbors:
@@ -158,22 +164,27 @@ class RotatedDecoder(LatticeDecoder):
                 self.node_map[syndrome_graph_key][target_node] = self.S[
                     syndrome_graph_key
                 ].add_node(target_node)
+            # print(f"virtual: {syndrome_graph_key}, {current_node}, {target_node}")
+            data_id = int((current_node[1]+target_node[1])/2 * self.params['d'][0] + (current_node[2]+target_node[2])/2)
+
+            # print(f"data qubit id is:{data_id}")
             self.S[syndrome_graph_key].add_edge(
                 self.node_map[syndrome_graph_key][current_node],
                 self.node_map[syndrome_graph_key][target_node],
-                edge_weight,
+                edge_weight[syndrome_graph_key][data_id],
             )  # add edge between current_node and virtual target_node
+            # print(f"edge_weight: {edge_weight[syndrome_graph_key][data_id]}")
 
         # recursively traverse normal neighbors
         for target in normal_neighbors:
             self._populate_syndrome_graph(
-                (t,) + target, t, visited_nodes, syndrome_graph_key, 1
+                (t,) + target, t, visited_nodes, syndrome_graph_key, edge_weight
             )
 
         # recursively traverse virtual neighbors
         for target in virtual_neighbors:
             self._populate_syndrome_graph(
-                (-1,) + target, t, visited_nodes, syndrome_graph_key, 1
+                (-1,) + target, t, visited_nodes, syndrome_graph_key, edge_weight
             )
 
     def _valid_syndrome(self, node: TQubitLoc, syndrome_graph_key: str) -> bool:
@@ -252,7 +263,6 @@ class RotatedDecoder(LatticeDecoder):
 
         source, target = match
         if logical_readout_type == "Z":
-            # print(f"source:{source}, target: {target}")
             return (source[0] == -1 and source[1] == -0.5) or (
                 target[0] == -1 and target[1] == -0.5
             )  # top

@@ -6,4 +6,9 @@ from .benchmarking import (
     TopologicalAnalysis,
     TopologicalBatchAnalysis,
 )
+from .noise_benchmarking import (
+    NoiseTopologicalBenchmark,
+    NoiseTopologicalAnalysis,
+    NoiseTopologicalBatchAnalysis,
+)
 
